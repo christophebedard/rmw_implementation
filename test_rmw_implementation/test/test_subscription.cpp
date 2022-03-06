@@ -625,6 +625,87 @@ TEST_F(CLASSNAME(TestSubscriptionUse, RMW_IMPLEMENTATION), ignore_local_publicat
   }
 }
 
+void printGid(rmw_gid_t * gid) {
+  uint8_t * d = gid->data;
+  printf(
+    "gid: %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+    d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9], d[10], d[11], d[12], d[13], d[14], d[15], d[16], d[17], d[18], d[19], d[20], d[21], d[22], d[23]);
+}
+
+TEST_F(CLASSNAME(TestSubscriptionUse, RMW_IMPLEMENTATION), take_with_info) {
+  rmw_ret_t ret;
+  bool taken = false;
+
+  // Create publisher
+  rmw_publisher_options_t pub_options = rmw_get_default_publisher_options();
+  rmw_publisher_t * pub = rmw_create_publisher(node, ts, topic_name, &qos_profile, &pub_options);
+  ASSERT_NE(nullptr, pub) << rmw_get_error_string().str;
+  OSRF_TESTING_TOOLS_CPP_SCOPE_EXIT(
+  {
+    EXPECT_EQ(RMW_RET_OK, rmw_destroy_publisher(node, pub)) << rmw_get_error_string().str;
+  });
+
+  // Roundtrip message from publisher to subscription
+  test_msgs__msg__BasicTypes original_message{};
+  ASSERT_TRUE(test_msgs__msg__BasicTypes__init(&original_message));
+  original_message.bool_value = true;
+  original_message.char_value = 'k';
+  original_message.float32_value = 3.14159f;
+  OSRF_TESTING_TOOLS_CPP_SCOPE_EXIT(
+  {
+    test_msgs__msg__BasicTypes__fini(&original_message);
+  });
+
+  rmw_publisher_allocation_t * null_allocation_p{nullptr};
+  rmw_subscription_allocation_t * null_allocation_s{nullptr};
+
+  ret = rmw_publish(pub, &original_message, null_allocation_p);
+  EXPECT_EQ(RMW_RET_OK, ret) << rmw_get_error_string().str;
+
+  rmw_subscriptions_t subscriptions;
+  void * subscriptions_storage[1];
+  subscriptions_storage[0] = sub->data;
+  subscriptions.subscribers = subscriptions_storage;
+  subscriptions.subscriber_count = 1;
+
+  rmw_wait_set_t * wait_set = rmw_create_wait_set(&context, 1);
+  ASSERT_NE(nullptr, wait_set) << rmw_get_error_string().str;
+  OSRF_TESTING_TOOLS_CPP_SCOPE_EXIT(
+  {
+    EXPECT_EQ(
+      RMW_RET_OK, rmw_destroy_wait_set(wait_set)) << rmw_get_error_string().str;
+  });
+  rmw_time_t timeout = {1, 0};  // 1000ms
+  ret = rmw_wait(&subscriptions, nullptr, nullptr, nullptr, nullptr, wait_set, &timeout);
+  EXPECT_EQ(RMW_RET_OK, ret) << rmw_get_error_string().str;
+  ASSERT_NE(nullptr, subscriptions.subscribers[0]);
+
+  test_msgs__msg__BasicTypes output_message{};
+  ASSERT_TRUE(test_msgs__msg__BasicTypes__init(&output_message));
+  OSRF_TESTING_TOOLS_CPP_SCOPE_EXIT(
+  {
+    test_msgs__msg__BasicTypes__fini(&output_message);
+  });
+
+  rmw_gid_t publisher_gid{};
+  ret = rmw_get_gid_for_publisher(pub, &publisher_gid);
+  ASSERT_EQ(RMW_RET_OK, ret) << rmw_get_error_string().str;
+
+  rmw_message_info_t message_info = rmw_get_zero_initialized_message_info();
+  ret = rmw_take_with_info(sub, &output_message, &taken, &message_info, null_allocation_s);
+  EXPECT_EQ(RMW_RET_OK, ret) << rmw_get_error_string().str;
+  EXPECT_TRUE(taken);
+  EXPECT_EQ(original_message, output_message);
+
+  bool gids_are_equal = false;
+  ret = rmw_compare_gids_equal(&message_info.publisher_gid, &publisher_gid, &gids_are_equal);
+  EXPECT_EQ(RMW_RET_OK, ret) << rmw_get_error_string().str;
+  EXPECT_TRUE(gids_are_equal);
+
+  printGid(&publisher_gid);
+  printGid(&message_info.publisher_gid);
+}
+
 TEST_F(CLASSNAME(TestSubscriptionUse, RMW_IMPLEMENTATION), take_sequence) {
   size_t count = 1u;
   size_t taken = 10u;  // Non-zero value to check variable update
